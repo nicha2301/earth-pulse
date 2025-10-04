@@ -5,7 +5,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { AppService } from './app.service';
 import { AppController } from './app.controller';
-import { TestController } from './test.controller';
 
 @Module({
   imports: [
@@ -30,7 +29,7 @@ import { TestController } from './test.controller';
     // Feature Modules
     EnvironmentModule,
   ],
-  controllers: [AppController, TestController],
+  controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}

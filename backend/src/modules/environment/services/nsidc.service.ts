@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { setupAxiosRetry } from '../../../config/http.config';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 interface IceExtentData {
   region: string;
@@ -20,7 +21,10 @@ export class NsidcService implements OnModuleInit {
   private readonly antarcticUrl =
     'https://noaadata.apps.nsidc.org/NOAA/G02135/south/daily/data/S_seaice_extent_daily_v4.0.csv';
 
-  constructor(private readonly httpService: HttpService) {}
+  constructor(
+    private readonly httpService: HttpService,
+    private readonly circuitBreakerService: CircuitBreakerService,
+  ) {}
 
   onModuleInit() {
     setupAxiosRetry(this.httpService.axiosRef, {
@@ -40,15 +44,31 @@ export class NsidcService implements OnModuleInit {
    * @param days Number of days to fetch (default: last 7 days for latest data)
    */
   async fetchArcticData(days = 7): Promise<IceExtentData[]> {
-    try {
-      this.logger.log(`Fetching Arctic sea ice data (last ${days} days)...`);
+    // Define the API call action
+    const fetchAction = async (numDays: number) => {
+      this.logger.log(`Fetching Arctic sea ice data (last ${numDays} days)...`);
       const response = await firstValueFrom(
         this.httpService.get(this.arcticUrl, {
           responseType: 'text',
         }),
       );
+      return this.parseCSV(response.data, 'Arctic', 'N', numDays);
+    };
 
-      return this.parseCSV(response.data, 'Arctic', 'N', days);
+    // Define fallback function
+    const fallback = async (numDays: number) => {
+      this.logger.warn(`🔄 Using fallback for Arctic data - circuit breaker open`);
+      return [];
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'nsidc',
+        fetchAction,
+        [days],
+        fallback,
+      );
     } catch (error) {
       this.logger.error('Error fetching Arctic data:', error.message);
       return [];
@@ -60,15 +80,31 @@ export class NsidcService implements OnModuleInit {
    * @param days Number of days to fetch (default: last 7 days for latest data)
    */
   async fetchAntarcticData(days = 7): Promise<IceExtentData[]> {
-    try {
-      this.logger.log(`Fetching Antarctic sea ice data (last ${days} days)...`);
+    // Define the API call action
+    const fetchAction = async (numDays: number) => {
+      this.logger.log(`Fetching Antarctic sea ice data (last ${numDays} days)...`);
       const response = await firstValueFrom(
         this.httpService.get(this.antarcticUrl, {
           responseType: 'text',
         }),
       );
+      return this.parseCSV(response.data, 'Antarctic', 'S', numDays);
+    };
 
-      return this.parseCSV(response.data, 'Antarctic', 'S', days);
+    // Define fallback function
+    const fallback = async (numDays: number) => {
+      this.logger.warn(`🔄 Using fallback for Antarctic data - circuit breaker open`);
+      return [];
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'nsidc',
+        fetchAction,
+        [days],
+        fallback,
+      );
     } catch (error) {
       this.logger.error('Error fetching Antarctic data:', error.message);
       return [];

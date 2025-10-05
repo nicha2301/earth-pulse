@@ -3,6 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { setupAxiosRetry } from '../../../config/http.config';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 interface NOAAStation {
   id: string;
@@ -79,6 +80,7 @@ export class NoaaService implements OnModuleInit {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {}
 
   onModuleInit() {
@@ -98,9 +100,9 @@ export class NoaaService implements OnModuleInit {
    * Get latest water level for a station
    */
   async getStationLatest(stationId: string): Promise<any> {
-    try {
-      const url = `${this.baseUrl}?station=${stationId}&product=water_level&date=latest&datum=MLLW&time_zone=gmt&units=metric&format=json&application=EarthPulse`;
-      
+    // Define the API call action
+    const fetchAction = async (station: string) => {
+      const url = `${this.baseUrl}?station=${station}&product=water_level&date=latest&datum=MLLW&time_zone=gmt&units=metric&format=json&application=EarthPulse`;
       this.logger.debug(`Fetching latest data from NOAA: ${url}`);
       
       const response = await firstValueFrom(
@@ -108,7 +110,6 @@ export class NoaaService implements OnModuleInit {
       );
 
       if (response.data && response.data.data && response.data.data.length > 0) {
-        const station = this.getStationInfo(stationId);
         const latestData = response.data.data[0];
         
         return {
@@ -130,6 +131,22 @@ export class NoaaService implements OnModuleInit {
       }
 
       return null;
+    };
+
+    // Define fallback function
+    const fallback = async (station: string) => {
+      this.logger.warn(`🔄 Using fallback for NOAA station ${station} - circuit breaker open`);
+      return null;
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'noaa',
+        fetchAction,
+        [stationId],
+        fallback,
+      );
     } catch (error) {
       if (error.response?.data?.error) {
         this.logger.warn(

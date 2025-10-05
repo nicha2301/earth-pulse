@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { setupAxiosRetry } from '../../../config/http.config';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 export interface LocationData {
   name: string;
@@ -37,6 +38,7 @@ export class OpenWeatherService implements OnModuleInit {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {
     const apiKey = this.configService.get<string>('OPENWEATHER_API_KEY');
     
@@ -67,10 +69,10 @@ export class OpenWeatherService implements OnModuleInit {
   }
 
   async getTemperature(lat: number, lon: number): Promise<TemperatureResponse | null> {
-    try {
-      const url = `${this.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${this.apiKey}&units=metric`;
+    // Define the API call action
+    const fetchAction = async (latitude: number, longitude: number) => {
+      const url = `${this.baseUrl}/weather?lat=${latitude}&lon=${longitude}&appid=${this.apiKey}&units=metric`;
       const response = await firstValueFrom(this.httpService.get(url));
-
       const data = response.data;
 
       return {
@@ -89,6 +91,22 @@ export class OpenWeatherService implements OnModuleInit {
         },
         timestamp: new Date(data.dt * 1000),
       };
+    };
+
+    // Define fallback function
+    const fallback = async (latitude: number, longitude: number) => {
+      this.logger.warn(`🔄 Using fallback for coordinates ${latitude},${longitude} - circuit breaker open`);
+      return null;
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'openweather',
+        fetchAction,
+        [lat, lon],
+        fallback,
+      );
     } catch (error) {
       this.logger.error(`Error fetching temperature for ${lat},${lon}:`, error.message);
       return null;

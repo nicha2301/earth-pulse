@@ -8,6 +8,9 @@ export class Temperature {
   @Prop({ required: true, index: true })
   location: string;
 
+  @Prop({ required: true, index: true })
+  locationLower: string;
+
   @Prop({ required: true })
   country: string;
 
@@ -47,5 +50,6 @@ export class Temperature {
 
 export const TemperatureSchema = SchemaFactory.createForClass(Temperature);
 
-// Create compound index
+// Create compound indexes for efficient queries
 TemperatureSchema.index({ location: 1, timestamp: -1 });
+TemperatureSchema.index({ locationLower: 1, timestamp: -1 }); // For case-insensitive searches

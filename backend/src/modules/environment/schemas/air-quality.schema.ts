@@ -8,6 +8,9 @@ export class AirQuality {
   @Prop({ required: true, index: true })
   city: string;
 
+  @Prop({ required: true, index: true })
+  cityLower: string; // Lowercase version for case-insensitive queries
+
   @Prop({ required: true })
   country: string;
 
@@ -42,5 +45,6 @@ export class AirQuality {
 
 export const AirQualitySchema = SchemaFactory.createForClass(AirQuality);
 
-// Create compound index for city and timestamp
+// Create compound indexes for efficient queries
 AirQualitySchema.index({ city: 1, timestamp: -1 });
+AirQualitySchema.index({ cityLower: 1, timestamp: -1 }); // For case-insensitive searches

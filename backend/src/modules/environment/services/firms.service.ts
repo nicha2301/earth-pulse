@@ -3,6 +3,7 @@ import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { setupAxiosRetry } from '../../../config/http.config';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 interface FirmsFireData {
   latitude: number;
@@ -30,6 +31,7 @@ export class FirmsService implements OnModuleInit {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {
     this.mapKey = this.configService.get<string>('FIRMS_MAP_KEY') || '';
   }
@@ -58,9 +60,9 @@ export class FirmsService implements OnModuleInit {
     days: number = 1,
     source: string = 'VIIRS_SNPP_NRT',
   ): Promise<FirmsFireData[]> {
-    try {
-      const url = `${this.baseUrl}/${this.mapKey}/${source}/${area}/${days}`;
-      
+    // Define the API call action
+    const fetchAction = async (areaParam: string, daysParam: number, sourceParam: string) => {
+      const url = `${this.baseUrl}/${this.mapKey}/${sourceParam}/${areaParam}/${daysParam}`;
       this.logger.log(`Fetching fires from FIRMS: ${url}`);
 
       const response = await firstValueFrom(
@@ -73,13 +75,27 @@ export class FirmsService implements OnModuleInit {
 
       // Parse CSV data
       const fires = this.parseCsvData(response.data);
-      
       this.logger.log(`Successfully fetched ${fires.length} fire detections`);
-      
       return fires;
+    };
+
+    // Define fallback function
+    const fallback = async () => {
+      this.logger.warn(`🔄 Using fallback for FIRMS - circuit breaker open or service unavailable`);
+      return [];
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'firms',
+        fetchAction,
+        [area, days, source],
+        fallback,
+      );
     } catch (error) {
       this.logger.error(`Failed to fetch fires from FIRMS: ${error.message}`);
-      throw error;
+      return [];
     }
   }
 

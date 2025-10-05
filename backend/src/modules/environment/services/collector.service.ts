@@ -57,9 +57,10 @@ export class CollectorService {
         const data = await this.aqicnService.getAirQuality(city);
 
         if (data) {
-          // Save to MongoDB
+          // Save to MongoDB with lowercase field for optimized queries
           const airQuality = new this.airQualityModel({
             ...data,
+            cityLower: data.city.toLowerCase(), // For case-insensitive index
             source: 'AQICN',
           });
           await airQuality.save();
@@ -100,9 +101,10 @@ export class CollectorService {
         const data = await this.openWeatherService.getTemperature(location.lat, location.lon);
 
         if (data) {
-          // Save to MongoDB
+          // Save to MongoDB with lowercase field for optimized queries
           const temperature = new this.temperatureModel({
             ...data,
+            locationLower: data.location.toLowerCase(), // For case-insensitive index
             source: 'OpenWeatherMap',
           });
           await temperature.save();

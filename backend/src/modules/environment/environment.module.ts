@@ -25,10 +25,12 @@ import { IceExtentService } from './services/ice-extent.service';
 import { NsidcService } from './services/nsidc.service';
 import { CollectorController } from './controllers/collector.controller';
 import { HistoricalCollectorController } from './controllers/historical-collector.controller';
+import { CircuitBreakerController } from './controllers/circuit-breaker.controller';
 import { HistoricalCollectorService } from './services/historical-collector.service';
 import { FirmsArchiveService } from './services/firms-archive.service';
 import { ConfigValidationService } from './services/config-validation.service';
 import { MetricsService } from './services/metrics.service';
+import { CircuitBreakerService } from './services/circuit-breaker.service';
 
 @Module({
   imports: [
@@ -49,10 +51,12 @@ import { MetricsService } from './services/metrics.service';
     IceExtentController,
     CollectorController,
     HistoricalCollectorController,
+    CircuitBreakerController,
   ],
   providers: [
     ConfigValidationService,
     MetricsService,
+    CircuitBreakerService,
     AirQualityService,
     TemperatureService,
     AqicnService,

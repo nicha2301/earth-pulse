@@ -50,8 +50,11 @@ export class ForestFire {
 
 export const ForestFireSchema = SchemaFactory.createForClass(ForestFire);
 
-// Create compound index for efficient queries
+// Create compound indexes for efficient queries
 ForestFireSchema.index({ timestamp: -1 });
 ForestFireSchema.index({ latitude: 1, longitude: 1 });
 ForestFireSchema.index({ confidence: 1, timestamp: -1 });
 ForestFireSchema.index({ satellite: 1, timestamp: -1 });
+
+// Compound index for duplicate detection (used in historical collector)
+ForestFireSchema.index({ latitude: 1, longitude: 1, acq_date: 1, acq_time: 1 });

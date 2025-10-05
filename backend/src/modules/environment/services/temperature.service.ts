@@ -22,9 +22,9 @@ export class TemperatureService {
       return cached;
     }
 
-    // Query database
+    // Query database using lowercase index for fast case-insensitive search
     const data = await this.temperatureModel
-      .findOne({ location: new RegExp(`^${location}$`, 'i') })
+      .findOne({ locationLower: location.toLowerCase() })
       .sort({ timestamp: -1 })
       .exec();
 

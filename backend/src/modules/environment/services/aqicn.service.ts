@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import { setupAxiosRetry } from '../../../config/http.config';
+import { CircuitBreakerService } from './circuit-breaker.service';
 
 export interface AqicnResponse {
   city: string;
@@ -33,6 +34,7 @@ export class AqicnService implements OnModuleInit {
   constructor(
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {
     const token = this.configService.get<string>('AQICN_API_TOKEN');
     
@@ -65,12 +67,13 @@ export class AqicnService implements OnModuleInit {
   }
 
   async getAirQuality(city: string): Promise<AqicnResponse | null> {
-    try {
-      const url = `${this.baseUrl}/feed/${city}/?token=${this.apiToken}`;
+    // Define the API call action
+    const fetchAction = async (cityName: string) => {
+      const url = `${this.baseUrl}/feed/${cityName}/?token=${this.apiToken}`;
       const response = await firstValueFrom(this.httpService.get(url));
 
       if (response.data.status !== 'ok') {
-        this.logger.warn(`AQICN API returned non-ok status for ${city}`);
+        this.logger.warn(`AQICN API returned non-ok status for ${cityName}`);
         return null;
       }
 
@@ -78,7 +81,7 @@ export class AqicnService implements OnModuleInit {
 
       // Validate AQI value - sometimes API returns "-" or invalid data
       if (!data.aqi || data.aqi === '-' || isNaN(Number(data.aqi))) {
-        this.logger.warn(`Invalid AQI value for ${city}: ${data.aqi}`);
+        this.logger.warn(`Invalid AQI value for ${cityName}: ${data.aqi}`);
         return null;
       }
 
@@ -87,7 +90,7 @@ export class AqicnService implements OnModuleInit {
       // Validate timestamp
       const timestamp = new Date(data.time.iso);
       if (isNaN(timestamp.getTime())) {
-        this.logger.warn(`Invalid timestamp for ${city}: ${data.time.iso}`);
+        this.logger.warn(`Invalid timestamp for ${cityName}: ${data.time.iso}`);
         return null;
       }
 
@@ -113,6 +116,22 @@ export class AqicnService implements OnModuleInit {
         },
         timestamp: timestamp,
       };
+    };
+
+    // Define fallback function
+    const fallback = async (cityName: string) => {
+      this.logger.warn(`🔄 Using fallback for ${cityName} - circuit breaker open or service unavailable`);
+      return null;
+    };
+
+    // Execute through circuit breaker
+    try {
+      return await this.circuitBreakerService.execute(
+        'aqicn',
+        fetchAction,
+        [city],
+        fallback,
+      );
     } catch (error) {
       this.logger.error(`Error fetching air quality for ${city}:`, error.message);
       return null;

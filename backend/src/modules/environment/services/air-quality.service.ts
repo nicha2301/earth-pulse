@@ -22,9 +22,9 @@ export class AirQualityService {
       return cached;
     }
 
-    // Query database
+    // Query database using lowercase index for fast case-insensitive search
     const data = await this.airQualityModel
-      .findOne({ city: new RegExp(`^${city}$`, 'i') })
+      .findOne({ cityLower: city.toLowerCase() })
       .sort({ timestamp: -1 })
       .exec();
 

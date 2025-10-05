@@ -7,6 +7,15 @@ import { OpenWeatherService } from './openweather.service';
 import { CacheService } from './cache.service';
 import { AirQuality, AirQualityDocument } from '../schemas/air-quality.schema';
 import { Temperature, TemperatureDocument } from '../schemas/temperature.schema';
+import { ForestFire, ForestFireDocument } from '../schemas/forest-fire.schema';
+import { FirmsService } from './firms.service';
+import { ForestFireService } from './forest-fire.service';
+import { SeaLevel, SeaLevelDocument } from '../schemas/sea-level.schema';
+import { NoaaService } from './noaa.service';
+import { SeaLevelService } from './sea-level.service';
+import { IceExtent, IceExtentDocument } from '../schemas/ice-extent.schema';
+import { NsidcService } from './nsidc.service';
+import { IceExtentService } from './ice-extent.service';
 
 @Injectable()
 export class CollectorService {
@@ -17,9 +26,21 @@ export class CollectorService {
     private airQualityModel: Model<AirQualityDocument>,
     @InjectModel(Temperature.name)
     private temperatureModel: Model<TemperatureDocument>,
+    @InjectModel(ForestFire.name)
+    private forestFireModel: Model<ForestFireDocument>,
+    @InjectModel(SeaLevel.name)
+    private seaLevelModel: Model<SeaLevelDocument>,
+    @InjectModel(IceExtent.name)
+    private iceExtentModel: Model<IceExtentDocument>,
     private aqicnService: AqicnService,
     private openWeatherService: OpenWeatherService,
     private cacheService: CacheService,
+    private firmsService: FirmsService,
+    private forestFireService: ForestFireService,
+    private noaaService: NoaaService,
+    private seaLevelService: SeaLevelService,
+    private nsidcService: NsidcService,
+    private iceExtentService: IceExtentService,
   ) {}
 
   // Run every hour (at minute 0)
@@ -111,11 +132,90 @@ export class CollectorService {
     );
   }
 
+  // Run every 3 hours (at minute 0 of every 3rd hour)
+  @Cron('0 */3 * * *')
+  async collectForestFireData() {
+    this.logger.log('🔥 Starting forest fire data collection...');
+
+    try {
+      // Get active fires from NASA FIRMS (last 24 hours)
+      const fires = await this.firmsService.getActiveFires('world', 1);
+
+      if (fires && fires.length > 0) {
+        // Save fires to database
+        const savedCount = await this.forestFireService.saveFiresBulk(fires);
+
+        this.logger.log(
+          `✅ Forest fire collection complete: ${savedCount} fires saved out of ${fires.length} detected`,
+        );
+      } else {
+        this.logger.log('ℹ️ No active fires detected');
+      }
+    } catch (error) {
+      this.logger.error('❌ Error collecting forest fire data:', error.message);
+    }
+  }
+
+  // Run every hour (at minute 10)
+  @Cron('10 * * * *')
+  async collectSeaLevelData() {
+    this.logger.log('🌊 Starting sea level data collection...');
+
+    try {
+      // Get all 25 stations latest data from NOAA
+      const seaLevels = await this.noaaService.getAllStationsLatest();
+
+      if (seaLevels && seaLevels.length > 0) {
+        // Save to database
+        const savedCount = await this.seaLevelService.saveSeaLevelsBulk(seaLevels);
+
+        this.logger.log(
+          `✅ Sea level collection complete: ${savedCount} readings saved out of ${seaLevels.length} fetched`,
+        );
+      } else {
+        this.logger.log('ℹ️ No sea level data available');
+      }
+    } catch (error) {
+      this.logger.error('❌ Error collecting sea level data:', error.message);
+    }
+  }
+
   // Manual trigger for testing
   async collectAllData() {
     this.logger.log('🚀 Manual data collection triggered');
     await this.collectAirQualityData();
     await this.collectTemperatureData();
+    await this.collectForestFireData();
+    await this.collectSeaLevelData();
+    await this.collectIceExtentData();
+  }
+
+  // Run daily at 6:00 AM
+  @Cron('0 6 * * *')
+  async collectIceExtentData() {
+    try {
+      this.logger.log('❄️ Starting ice extent data collection...');
+
+      // Fetch last 7 days of data for both Arctic and Antarctic
+      // This ensures we don't miss any updates
+      const iceExtents = await this.nsidcService.fetchAllData(7);
+
+      if (iceExtents.length === 0) {
+        this.logger.warn('No ice extent data fetched from NSIDC');
+        return;
+      }
+
+      this.logger.log(`Fetched ${iceExtents.length} ice extent readings from NSIDC`);
+
+      // Save to database (bulk insert, skip duplicates)
+      const result = await this.iceExtentService.saveIceExtentsBulk(iceExtents);
+
+      this.logger.log(
+        `✅ Ice extent collection complete: ${result.saved} new readings saved out of ${result.total} fetched`,
+      );
+    } catch (error) {
+      this.logger.error('Error collecting ice extent data:', error.message);
+    }
   }
 
   private sleep(ms: number): Promise<void> {

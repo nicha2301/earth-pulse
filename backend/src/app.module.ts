@@ -3,8 +3,11 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { EnvironmentModule } from './modules/environment/environment.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
+import { WinstonModule } from 'nest-winston';
 import { AppService } from './app.service';
 import { AppController } from './app.controller';
+import { winstonConfig } from './config/logger.config';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -13,6 +16,9 @@ import { AppController } from './app.controller';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Logging
+    WinstonModule.forRoot(winstonConfig),
 
     // Database
     MongooseModule.forRootAsync({
@@ -25,6 +31,9 @@ import { AppController } from './app.controller';
 
     // Task Scheduling
     ScheduleModule.forRoot(),
+
+    // Health Checks
+    HealthModule,
 
     // Feature Modules
     EnvironmentModule,

@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { setupAxiosRetry } from '../../../config/http.config';
 
 export interface LocationData {
   name: string;
@@ -28,7 +29,7 @@ export interface TemperatureResponse {
 }
 
 @Injectable()
-export class OpenWeatherService {
+export class OpenWeatherService implements OnModuleInit {
   private readonly logger = new Logger(OpenWeatherService.name);
   private readonly apiKey: string;
   private readonly baseUrl = 'https://api.openweathermap.org/data/2.5';
@@ -37,7 +38,32 @@ export class OpenWeatherService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {
-    this.apiKey = this.configService.get<string>('OPENWEATHER_API_KEY') || 'demo';
+    const apiKey = this.configService.get<string>('OPENWEATHER_API_KEY');
+    
+    if (!apiKey || apiKey === 'demo') {
+      this.logger.error(
+        '❌ OPENWEATHER_API_KEY not configured! ' +
+        'Please get a free API key from https://openweathermap.org/api ' +
+        'and set it in your .env file. Temperature data collection will fail without valid API key.'
+      );
+      throw new Error('OPENWEATHER_API_KEY is required. Please configure it in .env file.');
+    }
+    
+    this.apiKey = apiKey;
+    this.logger.log('✅ OpenWeatherMap API configured with valid key');
+  }
+
+  onModuleInit() {
+    setupAxiosRetry(this.httpService.axiosRef, {
+      retries: 3,
+      retryDelay: 1000,
+      onRetry: (retryCount, error) => {
+        this.logger.warn(
+          `OpenWeather API call failed, retry attempt ${retryCount}/3: ${error.message}`,
+        );
+      },
+    });
+    this.logger.log('✅ Retry mechanism configured for OpenWeather API');
   }
 
   async getTemperature(lat: number, lon: number): Promise<TemperatureResponse | null> {
@@ -98,5 +124,173 @@ export class OpenWeatherService {
       { name: 'Dubai', country: 'AE', lat: 25.2048, lon: 55.2708 },
       { name: 'Cairo', country: 'EG', lat: 30.0444, lon: 31.2357 },
     ];
+  }
+
+  /**
+   * Fetch historical temperature data for all cities within date range
+   * 
+   * IMPORTANT NOTE: OpenWeatherMap Free Plan does NOT support historical weather API.
+   * Historical weather data requires One Call API 3.0 subscription ($40-200/month).
+   * 
+   * This method is implemented for future use when upgraded to paid plan.
+   * For now, it will return empty array with warning.
+   * 
+   * Alternative approaches for MVP:
+   * 1. Collect daily data going forward (build history over time)
+   * 2. Use free alternative APIs like Open-Meteo for historical data
+   * 3. Upgrade to OpenWeather One Call API subscription
+   * 
+   * @param fromDate Start date
+   * @param toDate End date
+   * @returns Array of temperature readings (empty for free tier)
+   */
+  async fetchHistoricalData(fromDate: Date, toDate: Date): Promise<any[]> {
+    this.logger.warn(
+      '⚠️  OpenWeatherMap Free Plan does not support historical weather data.',
+    );
+    this.logger.warn(
+      '💡 Historical weather requires One Call API 3.0 subscription ($40-200/month).',
+    );
+    this.logger.warn(
+      '📝 Consider: 1) Build history daily going forward, 2) Use Open-Meteo API (free), or 3) Upgrade plan',
+    );
+
+    // Check if we have One Call API access from environment variable
+    const hasOneCallAPI = this.configService.get<string>('OPENWEATHER_ONE_CALL_ENABLED') === 'true';
+
+    if (!hasOneCallAPI) {
+      this.logger.log(
+        'OpenWeather One Call API not enabled. To enable historical temperature collection, ' +
+        'please upgrade to OpenWeather One Call API ($40-200/month) and set OPENWEATHER_ONE_CALL_ENABLED=true in .env'
+      );
+      return [];
+    }
+
+    // Future implementation for paid tier:
+    this.logger.log(
+      `Would fetch historical temperature data from ${fromDate.toISOString()} to ${toDate.toISOString()} for ${this.getLocationsForCollection().length} cities`,
+    );
+
+    const allData: any[] = [];
+    const locations = this.getLocationsForCollection();
+
+    // This would be the implementation if One Call API is available:
+    /*
+    for (const location of locations) {
+      try {
+        const url = `${this.baseUrl}/onecall/timemachine?lat=${location.lat}&lon=${location.lon}&dt=${Math.floor(fromDate.getTime() / 1000)}&appid=${this.apiKey}&units=metric`;
+        
+        const response = await firstValueFrom(this.httpService.get(url));
+        const data = response.data;
+        
+        // Process and format data...
+        allData.push(...formattedData);
+        
+        // Rate limiting
+        await this.sleep(100);
+      } catch (error) {
+        this.logger.error(`Error fetching historical data for ${location.name}: ${error.message}`);
+      }
+    }
+    */
+
+    return allData;
+  }
+
+  /**
+   * Alternative: Use Open-Meteo API for free historical weather data
+   * Open-Meteo provides free historical weather data back to 1940
+   * URL: https://archive-api.open-meteo.com/v1/archive
+   */
+  async fetchHistoricalDataFromOpenMeteo(
+    fromDate: Date,
+    toDate: Date,
+  ): Promise<any[]> {
+    this.logger.log(
+      `Fetching historical temperature data from Open-Meteo API (FREE alternative)`,
+    );
+
+    const allData: any[] = [];
+    const locations = this.getLocationsForCollection();
+    let successCount = 0;
+    let failCount = 0;
+
+    // Format dates for Open-Meteo (YYYY-MM-DD)
+    const startDate = fromDate.toISOString().split('T')[0];
+    const endDate = toDate.toISOString().split('T')[0];
+
+    for (const location of locations) {
+      try {
+        const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${location.lat}&longitude=${location.lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,temperature_2m_mean&timezone=UTC`;
+
+        this.logger.debug(
+          `Fetching data for ${location.name} from Open-Meteo...`,
+        );
+
+        const response = await firstValueFrom(this.httpService.get(url));
+        const data = response.data;
+
+        if (data.daily && data.daily.time) {
+          // Convert Open-Meteo format to our schema
+          for (let i = 0; i < data.daily.time.length; i++) {
+            allData.push({
+              location: location.name, // Changed from 'city' to 'location' to match schema
+              country: location.country,
+              coordinates: {
+                lat: location.lat,
+                lon: location.lon,
+              },
+              temperature: data.daily.temperature_2m_mean[i],
+              tempMin: data.daily.temperature_2m_min[i],
+              tempMax: data.daily.temperature_2m_max[i],
+              // Open-Meteo doesn't provide these, use defaults
+              feelsLike: data.daily.temperature_2m_mean[i],
+              humidity: null,
+              pressure: null,
+              weatherDescription: 'Historical data from Open-Meteo',
+              timestamp: new Date(data.daily.time[i] + 'T12:00:00Z'),
+              source: 'Open-Meteo',
+            });
+          }
+
+          successCount++;
+          this.logger.debug(
+            `✓ ${location.name}: ${data.daily.time.length} days of data`,
+          );
+        } else {
+          failCount++;
+          this.logger.warn(`✗ ${location.name}: No data available`);
+        }
+
+        // Progress logging every 5 cities
+        if ((successCount + failCount) % 5 === 0) {
+          this.logger.log(
+            `Progress: ${successCount + failCount}/${locations.length} cities (${Math.round(((successCount + failCount) / locations.length) * 100)}%)`,
+          );
+        }
+
+        // Rate limiting (Open-Meteo allows 10,000 requests/day, so 1 request/100ms is safe)
+        await this.sleep(100);
+      } catch (error) {
+        failCount++;
+        this.logger.error(
+          `Error fetching data for ${location.name}: ${error.message}`,
+        );
+        continue;
+      }
+    }
+
+    this.logger.log(
+      `Historical temperature collection completed: ${allData.length} total records from ${successCount} cities (${failCount} failed)`,
+    );
+
+    return allData;
+  }
+
+  /**
+   * Helper function to sleep for ms
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

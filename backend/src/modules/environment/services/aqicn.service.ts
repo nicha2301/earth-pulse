@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import { setupAxiosRetry } from '../../../config/http.config';
 
 export interface AqicnResponse {
   city: string;
@@ -24,7 +25,7 @@ export interface AqicnResponse {
 }
 
 @Injectable()
-export class AqicnService {
+export class AqicnService implements OnModuleInit {
   private readonly logger = new Logger(AqicnService.name);
   private readonly apiToken: string;
   private readonly baseUrl = 'https://api.waqi.info';
@@ -33,7 +34,34 @@ export class AqicnService {
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ) {
-    this.apiToken = this.configService.get<string>('AQICN_API_TOKEN') || 'demo';
+    const token = this.configService.get<string>('AQICN_API_TOKEN');
+    
+    if (!token || token === 'demo') {
+      this.logger.warn(
+        '⚠️  AQICN_API_TOKEN not configured or using demo key. ' +
+        'Please get a free API key from https://aqicn.org/data-platform/token/ ' +
+        'and set it in your .env file. Demo token has severe rate limits and may not work reliably.'
+      );
+      this.apiToken = 'demo'; // Fallback to demo for backward compatibility
+    } else {
+      this.logger.log('✅ AQICN API configured with valid token');
+      this.apiToken = token;
+    }
+  }
+
+  onModuleInit() {
+    // Setup retry mechanism for AQICN API calls
+    setupAxiosRetry(this.httpService.axiosRef, {
+      retries: 3,
+      retryDelay: 1000,
+      onRetry: (retryCount, error, requestConfig) => {
+        this.logger.warn(
+          `AQICN API retry ${retryCount}/3: ${requestConfig.url}`,
+          { error: error.message },
+        );
+      },
+    });
+    this.logger.log('✅ AQICN service initialized with retry mechanism');
   }
 
   async getAirQuality(city: string): Promise<AqicnResponse | null> {
@@ -48,13 +76,28 @@ export class AqicnService {
 
       const data = response.data.data;
 
+      // Validate AQI value - sometimes API returns "-" or invalid data
+      if (!data.aqi || data.aqi === '-' || isNaN(Number(data.aqi))) {
+        this.logger.warn(`Invalid AQI value for ${city}: ${data.aqi}`);
+        return null;
+      }
+
+      const aqiValue = Number(data.aqi);
+
+      // Validate timestamp
+      const timestamp = new Date(data.time.iso);
+      if (isNaN(timestamp.getTime())) {
+        this.logger.warn(`Invalid timestamp for ${city}: ${data.time.iso}`);
+        return null;
+      }
+
       // Get AQI level based on value
-      const level = this.getAqiLevel(data.aqi);
+      const level = this.getAqiLevel(aqiValue);
 
       return {
         city: data.city.name.split(',')[0].trim(),
         country: this.extractCountry(data.city.name),
-        aqi: data.aqi,
+        aqi: aqiValue,
         level,
         pollutants: {
           pm25: data.iaqi?.pm25?.v,
@@ -68,7 +111,7 @@ export class AqicnService {
           lat: data.city.geo[0],
           lon: data.city.geo[1],
         },
-        timestamp: new Date(data.time.iso),
+        timestamp: timestamp,
       };
     } catch (error) {
       this.logger.error(`Error fetching air quality for ${city}:`, error.message);

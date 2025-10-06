@@ -31,6 +31,8 @@ import { FirmsArchiveService } from './services/firms-archive.service';
 import { ConfigValidationService } from './services/config-validation.service';
 import { MetricsService } from './services/metrics.service';
 import { CircuitBreakerService } from './services/circuit-breaker.service';
+import { CleanupService } from './services/cleanup.service';
+import { CleanupController } from './controllers/cleanup.controller';
 
 @Module({
   imports: [
@@ -52,6 +54,7 @@ import { CircuitBreakerService } from './services/circuit-breaker.service';
     CollectorController,
     HistoricalCollectorController,
     CircuitBreakerController,
+    CleanupController,
   ],
   providers: [
     ConfigValidationService,
@@ -71,6 +74,7 @@ import { CircuitBreakerService } from './services/circuit-breaker.service';
     NsidcService,
     HistoricalCollectorService,
     FirmsArchiveService,
+    CleanupService,
   ],
 })
 export class EnvironmentModule {}
